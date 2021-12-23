@@ -1,7 +1,9 @@
 package main.fs;
 
 import com.google.gson.Gson;
+import main.Utils.EncryptionUtils;
 import main.fs.beans.CommitResult;
+import main.fs.beans.Directory;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileOutputStream;
@@ -11,9 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
+import java.util.Stack;
 import java.util.stream.Collectors;
 
 import static main.Utils.EncryptionUtils.decrypt;
@@ -22,122 +23,151 @@ import static main.Utils.EncryptionUtils.encrypt;
 public class FileSystem {
     public static final String DELETED_DIR_NAME = ".deleted";
     private static final Gson GSON = new Gson();
-    private final Path root;
     private final byte[] key;
-    private final Index index;
+    private final Directory root;
 
-    public FileSystem(final Path root, final byte[] key) {
-        this.root = root;
+    public FileSystem(final Path rootPath, final byte[] key) {
         this.key = key;
-        this.index = buildFileSystem(getIndexPath());
-        System.out.println("Found : " + index.targetVsEntry.size() + " files in filesystem");
+        this.root = buildFileSystem(rootPath);
+        System.out.println("Found : " + root.getTotal() + " files in filesystem");
     }
 
+    public Directory findDir(Path path) {
+        final Stack<String> stack = new Stack<>();
+        while (path != null) {
+            stack.push(path.getFileName().toString());
+            path = path.getParent();
+        }
+
+        Directory current = root;
+        while (!stack.isEmpty()) {
+            final String dirName = stack.pop();
+            final Directory next = current.getDir(dirName);
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return current;
+    }
+
+    /*
+        original is file path relative to source directory
+        target is file path relative to target directory
+     */
     public boolean addOrUpdateFile(final Path original, final Path target) {
-        return index.addFile(original, target);
+        return createDirIfAbsent(original.getParent()).createOrUpdateFile(original.getFileName().toString(), root.getPath().relativize(target).toString());
     }
 
+    /*
+        original is file path relative to source directory
+        target is file path relative to target directory
+     */
+    public boolean addOrUpdateSymlinkFile(final Path original, final Path target, final Path symlinkTarget, final boolean isInternalSymlink) {
+        return createDirIfAbsent(original.getParent()).createOrUpdateSymlinkFile(original.getFileName().toString(), root.getPath().relativize(target).toString(), symlinkTarget, isInternalSymlink);
+    }
+
+    public Directory createDirIfAbsent(Path path) {
+        final Stack<String> stack = new Stack<>();
+        while (path != null) {
+            stack.push(path.getFileName().toString());
+            path = path.getParent();
+        }
+
+        Directory parentDirectory = root;
+        while (!stack.isEmpty()) {
+            final String dirName = stack.pop();
+            parentDirectory = parentDirectory.createDirIfAbsent(dirName);
+        }
+        return parentDirectory;
+    }
+
+    //persist new dir structure in file
     public CommitResult commit() {
+        flush();
+        final int removed = clean();
+        return new CommitResult(removed, 0);
+    }
+
+    public boolean removeDir(final Path path) {
+        final Directory parent = findDir(path.getParent());
+        return parent.removeDir(path.getFileName().toString());
+    }
+
+    public boolean removeFile(final Path path) {
+        final Directory parent = findDir(path.getParent());
+
+        if (parent == null) {
+            return false;
+        }
+        return parent.removeFile(path.getFileName().toString());
+    }
+
+    public int clean() {
         try {
-            int danglingEntries = 0;
-            for (final String encryptedFilePath : index.targetVsEntry.keySet()) {
-                final Path encryptedFile = root.resolve(Paths.get(encryptedFilePath));
-                if (!Files.exists(encryptedFile)) {
-                    index.removeFile(encryptedFile);
-                    danglingEntries++;
-                }
+            final Path rootPath = root.getPath();
+            final Set<Path> allFiles = Files.walk(rootPath).filter(path -> !path.toFile().isDirectory())
+                    .filter(EncryptionUtils::isValid).map(rootPath::relativize).collect(Collectors.toSet());
+            allFiles.removeAll(getReferencedFiles(root));
+            //remaining files are orphaned
+            for (final Path path : allFiles) {
+                //move to trash folder instead
+                final Path deletedFilePath = rootPath.resolve(DELETED_DIR_NAME).resolve(path);
+                Files.createDirectories(deletedFilePath.getParent());
+                Files.move(rootPath.resolve(path), deletedFilePath);
             }
-
-            flush();
-
-            final List<Path> orphanedFiles = Files.walk(root).filter(path -> !path.toFile().isDirectory()).filter(path -> !path.toString().endsWith(".fs"))
-                    .filter(path -> !index.targetVsEntry.containsKey(getId(path)))
-                    .collect(Collectors.toList());
-            for (final Path path : orphanedFiles) {
-                //move to trash instead
-                final Path deletedDirectory = root.resolve(DELETED_DIR_NAME);
-                Files.createDirectories(deletedDirectory);
-                Files.move(path, deletedDirectory.resolve(path.getFileName()));
-            }
-            return new CommitResult(orphanedFiles.size(), danglingEntries);
+            return allFiles.size();
         } catch (Exception ex) {
-            throw new RuntimeException(ex);
+            throw new RuntimeException("Error cleaning up the filesystem", ex);
         }
     }
 
-    private void flush() throws IOException {
-        final byte[] data = GSON.toJson(index).getBytes(StandardCharsets.UTF_8);
-        encrypt(data, key);
-
-        final FileOutputStream fos = new FileOutputStream(getIndexPath().toFile());
-        fos.write(data);
-        fos.flush();
-        fos.close();
+    public Directory getRoot() {
+        return root;
     }
 
-    private String getId(Path file) {
-        return root.relativize(file).toString();
+    private static Set<Path> getReferencedFiles(final Directory dir) {
+        final Set<Path> referencedFiles = dir.getAllFiles().stream().map(f -> Paths.get(f.getEncryptedFilePath())).collect(Collectors.toSet());
+        dir.getAllSubDirs().forEach(d -> referencedFiles.addAll(getReferencedFiles(d)));
+        return referencedFiles;
     }
 
-    private Path getIndexPath() {
-        return root.resolve(".fs");
-    }
-
-    private Index buildFileSystem(final Path path) {
+    private void flush() {
         try {
-            final byte[] data = Files.readAllBytes(path);
+            final byte[] data = GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+            encrypt(data, key);
+
+            final FileOutputStream fos = new FileOutputStream(root.getPath().resolve(".fs").toFile());
+            fos.write(data);
+            fos.flush();
+            fos.close();
+        } catch (Exception ex) {
+            throw new RuntimeException("Error flushing filesystem index", ex);
+        }
+    }
+
+    private Directory buildFileSystem(final Path path) {
+        try {
+            final byte[] data = Files.readAllBytes(path.resolve(".fs"));
             decrypt(data, key);
-            final Index loadedIndex = GSON.fromJson(new InputStreamReader(new ByteArrayInputStream(data)), Index.class);
-            return loadedIndex == null ? new Index(new ConcurrentHashMap<>()) : new Index(new ConcurrentHashMap<>(loadedIndex.targetVsEntry));
+            Directory rootDir = GSON.fromJson(new InputStreamReader(new ByteArrayInputStream(data)), Directory.class);
+            rootDir = rootDir == null ? new Directory(path.getFileName().toString(), path) : rootDir;
+            rootDir.setPath(path);
+            populateDirPaths(rootDir);
+            return rootDir;
         } catch (Exception ex) {
             System.out.println("Encountered error while rebuilding filesystem : " + ex);
             throw new RuntimeException(ex);
         }
     }
 
-    public String getPath(final Path file) {
-        return index.targetVsEntry.get(getId(file)).path;
-    }
+    private static void populateDirPaths(final Directory dir) {
+        final Path path = dir.getPath();
 
-    private static class Directory {
-        private final List<Directory> dirs;
-        private final List<FileInfo> files;
-    }
-    private class Index {
-        private final ConcurrentHashMap<String, IndexEntry> targetVsEntry;
-        private final ConcurrentHashMap<String, String> originalFileVsEncryptedFile;
-
-        private Index(ConcurrentHashMap<String, IndexEntry> encryptedFileVsEntry) {
-            this.targetVsEntry = encryptedFileVsEntry;
-
-            originalFileVsEncryptedFile = new ConcurrentHashMap<>();
-
-            for (final Map.Entry<String, IndexEntry> entry : encryptedFileVsEntry.entrySet()) {
-                originalFileVsEncryptedFile.put(entry.getValue().path, entry.getKey());
-            }
-        }
-
-        public boolean addFile(final Path originalPath, final Path targetPath) {
-            final String original = originalPath.toString();
-            targetVsEntry.put(getId(targetPath), new IndexEntry(original));
-            final String old = originalFileVsEncryptedFile.put(originalPath.toString(), getId(targetPath));
-            if (old != null) {
-                targetVsEntry.remove(old);
-                return false;
-            }
-            return true;
-        }
-
-        public void removeFile(final Path path) {
-            targetVsEntry.remove(path.toString());
+        for (final Directory subdir : dir.getAllSubDirs()) {
+            subdir.setPath(path.resolve(subdir.getName()));
+            populateDirPaths(subdir);
         }
     }
 
-    private static class IndexEntry {
-        private final String path;
-
-        private IndexEntry(String path) {
-            this.path = path;
-        }
-    }
 }

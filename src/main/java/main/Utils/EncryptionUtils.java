@@ -18,6 +18,9 @@ public class EncryptionUtils {
 
     static {
         for (final FileType fileType : FileType.values()) {
+            if (fileType == NON_REGULAR) {
+                continue;
+            }
             VALID_EXTENSIONS.add(fileType.getExtension());
         }
     }

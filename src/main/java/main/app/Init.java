@@ -2,19 +2,20 @@ package main.app;
 
 import main.codec.FileDecryptor;
 import main.codec.FileEncryptor;
+import main.fs.FileSystem;
+import main.fs.beans.Directory;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Scanner;
 import java.util.function.Function;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class Init {
     public static void main(String[] args) throws IOException {
-//        args = new String[]{"decrypt", "/Users/gandalf/Downloads/Locked", "/Users/gandalf/Downloads/Unlocked", "justdoit", "7"};
-//        args = new String[]{"add", "/Users/gandalf/Downloads/bup", "/Users/gandalf/Downloads/temp", "justdoit", "7"};
         final String operation = args[0];
         if ("init".equals(operation)) {
             final Path targetDir = Paths.get(args[1]).toAbsolutePath();
@@ -44,8 +45,13 @@ public class Init {
             final String password = args[3];
             final int threads = Integer.parseInt(args[4]);
             final FileDecryptor fileDecryptor = new FileDecryptor(password.getBytes(UTF_8), root, targetDir, Function.identity(), threads);
-            Files.walkFileTree(root, fileDecryptor);
-            fileDecryptor.await();
+            fileDecryptor.decrypt();
+        } else if ("cmd".equals(operation)) {
+            final Path root = Paths.get(args[1]).toAbsolutePath();
+            final String password = args[2];
+            final FileSystem filesystem = new FileSystem(root, password.getBytes(UTF_8));
+            final Console console = new Console(filesystem);
+            console.start();
         }
     }
 }

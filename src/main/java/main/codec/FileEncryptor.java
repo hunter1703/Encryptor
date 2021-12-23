@@ -60,23 +60,27 @@ public class FileEncryptor extends SimpleFileVisitor<Path> {
                 Files.createFile(targetPath);
 
                 byte[] data;
+                boolean newFile;
                 if (fileType == REGULAR) {
                     data = Files.readAllBytes(file);
+                    encrypt(data, key);
+                    Files.write(targetPath, data);
+                    newFile = filesystem.addOrUpdateFile(root.getParent().relativize(file), targetPath);
                 } else {
-                    //if target file for symlink does not exists, file.toRealPath() throws exception
+                    //checks if symlink target file exists
                     if (Files.notExists(file)) {
                         return EncryptionStatus.FILE_NOT_EXISTS;
                     }
                     Path linked = file.toRealPath().toAbsolutePath();
 
+                    //internal symlink i.e. symlink target is part of root directory which is getting encrypted
+                    boolean isInternalSymlink = false;
                     if (linked.startsWith(root)) {
-                        linked = root.relativize(linked);
+                        linked = root.getParent().relativize(linked);
+                        isInternalSymlink = true;
                     }
-                    data = linked.toString().getBytes(StandardCharsets.UTF_8);
+                    newFile = filesystem.addOrUpdateSymlinkFile(root.getParent().relativize(file), targetPath, linked, isInternalSymlink);
                 }
-                encrypt(data, key);
-                Files.write(targetPath, data);
-                final boolean newFile = filesystem.addOrUpdateFile(root.getParent().relativize(file), targetPath);
                 return newFile ? EncryptionStatus.ADD : EncryptionStatus.UPDATE;
             } catch (Exception ex) {
                 throw new RuntimeException("Failed for : " + file, ex);
