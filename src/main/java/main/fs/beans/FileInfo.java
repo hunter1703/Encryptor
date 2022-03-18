@@ -1,14 +1,18 @@
 package main.fs.beans;
 
+import java.nio.file.Path;
+
 public class FileInfo {
+    //original file name
     private final String name;
+    //relative encrypted file path in OS file system
     private final String encryptedFilePath;
     private final String symlinkTarget;
     private final Boolean isInternalSymlink;
 
-    public FileInfo(String name, String encryptedFilePath, String symlinkTarget, Boolean isInternalSymlink) {
+    public FileInfo(String name, Path encryptedFilePath, String symlinkTarget, Boolean isInternalSymlink) {
         this.name = name;
-        this.encryptedFilePath = encryptedFilePath;
+        this.encryptedFilePath = encryptedFilePath.toString();
         this.symlinkTarget = symlinkTarget;
         this.isInternalSymlink = isInternalSymlink;
     }

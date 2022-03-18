@@ -71,7 +71,7 @@ public class Console {
                     break;
                 default:
                     if (command.startsWith("cd")) {
-                        final String destination = scanner.next();
+                        final String destination = scanner.nextLine().trim();
                         switch (destination) {
                             case "-":
                                 final Directory temp = prev;

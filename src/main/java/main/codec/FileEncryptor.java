@@ -4,6 +4,7 @@ import main.enums.FileType;
 import main.fs.FileSystem;
 import main.fs.beans.CommitResult;
 
+import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,7 +22,6 @@ public class FileEncryptor extends SimpleFileVisitor<Path> {
     private final byte[] key;
     //source directory
     private final Path root;
-    private final Path mountPoint;
     //target directory
     private final Path target;
     private final FileSystem filesystem;
@@ -29,70 +29,70 @@ public class FileEncryptor extends SimpleFileVisitor<Path> {
     private final List<Future<EncryptionStatus>> allFutures = new ArrayList<>();
 
 
-    public FileEncryptor(byte[] key, Path root, Path mountPoint, Path target, int threads) {
+    public FileEncryptor(byte[] key, Path root, Path target, int threads) {
         this.key = key;
         this.root = root;
-        this.mountPoint = mountPoint;
         this.target = target;
         this.filesystem = new FileSystem(target, key);
         this.executorService = new MyExecutorServiceBuilder(threads, "encryption").build();
     }
 
     @Override
-    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+    public FileVisitResult visitFile(Path source, BasicFileAttributes attrs) {
         allFutures.add(executorService.submit(() -> {
             final Thread currentThread = Thread.currentThread();
             final String threadName = currentThread.getName();
-            currentThread.setName(threadName + "_" + file.toString());
+            currentThread.setName(threadName + "_" + source.toString());
             try {
-                final FileType fileType = getFileType(file, root);
+                final FileType fileType = getFileType(source, root);
                 if (fileType == NON_REGULAR) {
-                    System.out.println("Found non-regular file : " + file);
+                    System.out.println("Found non-regular source : " + source);
                     return EncryptionStatus.NOOP;
                 }
                 String name = getRandomName(fileType);
-                //so that files do not get cluttered in same directory, same as git
-                String directoryName = name.substring(0, 2);
-                Path targetPath = target.resolve(directoryName).resolve(name.substring(2));
-                //ensure unique file name
-                while (Files.exists(targetPath)) {
-                    name = getRandomName(fileType);
-                    directoryName = name.substring(0, 2);
-                    targetPath = target.resolve(directoryName).resolve(name.substring(2));
-                }
+                final Path targetPath = getUniqueAbsolutePath(fileType, name);
                 Files.createDirectories(targetPath.getParent());
                 Files.createFile(targetPath);
 
-                byte[] data;
                 boolean newFile;
                 if (fileType == REGULAR) {
-                    data = Files.readAllBytes(file);
-                    encrypt(data, key);
-                    Files.write(targetPath, data);
-                    newFile = filesystem.addOrUpdateFile(root.getParent().relativize(file), targetPath, mountPoint);
+                    newFile = addRegularFile(source, targetPath);
                 } else {
-                    //checks if symlink target file exists
-                    if (Files.notExists(file)) {
+                    //checks if symlink target source exists
+                    if (Files.notExists(source)) {
                         return EncryptionStatus.FILE_NOT_EXISTS;
                     }
-                    Path linked = file.toRealPath().toAbsolutePath();
-
-                    //internal symlink i.e. symlink target is part of root directory which is getting encrypted
-                    boolean isInternalSymlink = false;
-                    if (linked.startsWith(root)) {
-                        linked = root.getParent().relativize(linked);
-                        isInternalSymlink = true;
-                    }
-                    newFile = filesystem.addOrUpdateSymlinkFile(root.getParent().relativize(file), targetPath, linked, isInternalSymlink, mountPoint);
+                    newFile = handleSymlinkFile(source, targetPath);
                 }
                 return newFile ? EncryptionStatus.ADD : EncryptionStatus.UPDATE;
             } catch (Exception ex) {
-                throw new RuntimeException("Failed for : " + file, ex);
+                throw new RuntimeException("Failed for : " + source, ex);
             } finally {
                 currentThread.setName(threadName);
             }
         }));
         return FileVisitResult.CONTINUE;
+    }
+
+    private boolean addRegularFile(Path file, Path targetPath) throws IOException {
+        byte[] data = Files.readAllBytes(file);
+        encrypt(data, key);
+        Files.write(targetPath, data);
+        return filesystem.addOrUpdateFile(root.getParent().relativize(file), target.relativize(targetPath));
+    }
+
+    private boolean handleSymlinkFile(Path source, Path targetPath) throws IOException {
+        boolean newFile;
+        Path linked = source.toRealPath().toAbsolutePath();
+
+        //internal symlink i.e. symlink target is part of root directory which is getting encrypted
+        boolean isInternalSymlink = false;
+        if (linked.startsWith(root)) {
+            linked = root.getParent().relativize(linked);
+            isInternalSymlink = true;
+        }
+        newFile = filesystem.addOrUpdateSymlinkFile(root.getParent().relativize(source), targetPath, linked, isInternalSymlink);
+        return newFile;
     }
 
     public void commit() {
@@ -134,6 +134,19 @@ public class FileEncryptor extends SimpleFileVisitor<Path> {
         System.out.println("Deleted : " + result.getOrphaned() + " orphaned files from the filesystem");
         System.out.println("Updated : " + result.getDangling() + " dangling entries in the filesystem");
         executorService.shutdown();
+    }
+
+    private Path getUniqueAbsolutePath(final FileType fileType, String name) {
+        //so that files do not get cluttered in same directory, same as git
+        String directoryName = name.substring(0, 4);
+        Path targetPath = target.resolve(directoryName).resolve(name.substring(2));
+        //ensure unique file
+        while (Files.exists(targetPath)) {
+            name = getRandomName(fileType);
+            directoryName = name.substring(0, 2);
+            targetPath = target.resolve(directoryName).resolve(name.substring(2));
+        }
+        return targetPath;
     }
 
     private enum EncryptionStatus {

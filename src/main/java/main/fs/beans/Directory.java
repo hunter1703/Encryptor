@@ -30,12 +30,14 @@ public class Directory {
         return dirs.computeIfAbsent(name, unused -> new Directory(name, this.path.resolve(name)));
     }
 
-    public boolean createOrUpdateFile(final String name, final String originalPath) {
-        return files.putIfAbsent(name, new FileInfo(name, originalPath, null, null)) == null;
+    public boolean createOrUpdateFile(final Path originalFile, final Path myPath) {
+        final String name = originalFile.getFileName().toString();
+        return files.putIfAbsent(name, new FileInfo(name, myPath, null, null)) == null;
     }
 
-    public boolean createOrUpdateSymlinkFile(final String name, final String encryptedFilePath, final Path symlinkTarget, final boolean isInternalSymlink) {
-        return files.putIfAbsent(name, new FileInfo(name, encryptedFilePath, symlinkTarget.toString(), isInternalSymlink)) == null;
+    public boolean createOrUpdateSymlinkFile(final Path originalFile, final Path myPath, final Path symlinkTarget, final boolean isInternal) {
+        final String name = originalFile.getFileName().toString();
+        return files.putIfAbsent(name, new FileInfo(name, myPath, symlinkTarget.toString(), isInternal)) == null;
     }
 
     public boolean removeDir(final String name) {

@@ -66,6 +66,7 @@ public class EncryptionUtils {
     }
 
     public static String readExtension(Path path) {
-        return path.getFileName().toString().split("\\.")[1];
+        final String[] split = path.getFileName().toString().split("\\.");
+        return split[split.length - 1];
     }
 }

@@ -14,9 +14,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public class Init {
     public static void main(String[] args) throws IOException {
-        //        args = new String[]{"decrypt", "/Users/gandalf/Downloads/temp", "/Users/gandalf/Downloads/tempest", "justdoit", "7"};
-//        args = new String[]{"add", "/Users/gandalf/Downloads/bup", "/Users/gandalf/Downloads/temp", "justdoit", "7"};
-//        args = new String[]{"cmd", "/Users/gandalf/Downloads/Locked", "khuljasimsim"};
         final String operation = args[0];
         if ("init".equals(operation)) {
             final Path targetDir = Paths.get(args[1]).toAbsolutePath();
@@ -35,11 +32,7 @@ public class Init {
             final Path targetDir = Paths.get(args[2]).toAbsolutePath();
             final String password = args[3];
             final int threads = Integer.parseInt(args[4]);
-            Path mountPoint = root;
-            if (args.length > 5) {
-                mountPoint = Paths.get(args[5]);
-            }
-            final FileEncryptor fileEncryptor = new FileEncryptor(password.getBytes(UTF_8), root, mountPoint, targetDir, threads);
+            final FileEncryptor fileEncryptor = new FileEncryptor(password.getBytes(UTF_8), root, targetDir, threads);
             final long total = Files.walk(root).filter(p -> !p.toFile().isDirectory()).count();
             System.out.println("Total files to add : " + total);
             Files.walkFileTree(root, fileEncryptor);

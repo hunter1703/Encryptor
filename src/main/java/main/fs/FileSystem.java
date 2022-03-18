@@ -20,10 +20,11 @@ import static main.Utils.EncryptionUtils.decrypt;
 import static main.Utils.EncryptionUtils.encrypt;
 
 public class FileSystem {
-    public static final String DELETED_DIR_NAME = ".deleted";
+    public static final Path DELETED_DIR = Paths.get(".deleted");
     private static final Gson GSON = new Gson();
     private final Path rootPath;
     private final byte[] key;
+    //root of my file system
     private Directory root;
 
     public FileSystem(final Path rootPath, final byte[] key) {
@@ -33,6 +34,7 @@ public class FileSystem {
         System.out.println("Found : " + root.getTotal() + " files in filesystem");
     }
 
+    // find directory in my file system
     public Directory findDir(Path path) {
         final Stack<String> stack = new Stack<>();
         while (path != null) {
@@ -54,21 +56,22 @@ public class FileSystem {
 
     /*
         original is file path relative to source directory in OS filesystem
-        target is file path relative to target directory in OS filesystem
+        target is encrypted file path relative to target directory in OS filesystem
      */
-    public boolean addOrUpdateFile(Path original, final Path target, final Path mountPoint) {
-        original = mountPoint.resolve(original);
+    public boolean addOrUpdateFile(Path original, final Path target) {
+        //create directories in my file system
         final Directory parent = createDirIfAbsent(original.getParent());
-        return parent.createOrUpdateFile(original.getFileName().toString(), root.getPath().relativize(target).toString());
+        return parent.createOrUpdateFile(original, target);
     }
 
     /*
-        original is file path relative to source directory
-        target is file path relative to target directory
+        original is file path relative to source directory in OS filesystem
+        target is encrypted file path relative to target directory in OS filesystem
      */
-    public boolean addOrUpdateSymlinkFile(Path original, final Path target, final Path symlinkTarget, final boolean isInternalSymlink, final Path mountPoint) {
-        original = mountPoint.resolve(original);
-        return createDirIfAbsent(original.getParent()).createOrUpdateSymlinkFile(original.getFileName().toString(), root.getPath().relativize(target).toString(), symlinkTarget, isInternalSymlink);
+    public boolean addOrUpdateSymlinkFile(Path original, final Path target, final Path symlinkTarget, final boolean isInternalSymlink) {
+        //create directories in my file system
+        final Directory parent = createDirIfAbsent(original.getParent());
+        return parent.createOrUpdateSymlinkFile(original, target, symlinkTarget, isInternalSymlink);
     }
 
     public Directory createDirIfAbsent(Path path) {
@@ -120,13 +123,18 @@ public class FileSystem {
     public int clean() {
         try {
             final Path rootPath = root.getPath();
-            final Set<Path> allFiles = Files.walk(rootPath).filter(path -> !path.toFile().isDirectory())
-                    .filter(EncryptionUtils::isValid).map(rootPath::relativize).collect(Collectors.toSet());
+            //all the files in OS filesystem
+            final Set<Path> allFiles = Files.walk(rootPath)
+                                            .filter(path -> !path.toFile().isDirectory())
+                                            .filter(EncryptionUtils::isValid)
+                                            .map(rootPath::relativize)
+                                            .collect(Collectors.toSet());
+            //all files that exist in my file system
             allFiles.removeAll(getReferencedFiles(root));
-            //remaining files are orphaned
+            //remaining files are orphaned, not part of my filesystem
             for (final Path path : allFiles) {
                 //move to trash folder instead
-                final Path deletedFilePath = rootPath.resolve(DELETED_DIR_NAME).resolve(path);
+                final Path deletedFilePath = rootPath.resolve(DELETED_DIR).resolve(path.toString() + ".del");
                 Files.createDirectories(deletedFilePath.getParent());
                 Files.move(rootPath.resolve(path), deletedFilePath);
             }
@@ -141,7 +149,8 @@ public class FileSystem {
     }
 
     private static Set<Path> getReferencedFiles(final Directory dir) {
-        final Set<Path> referencedFiles = dir.getAllFiles().stream().map(f -> Paths.get(f.getEncryptedFilePath())).collect(Collectors.toSet());
+        final Set<Path> referencedFiles = dir.getAllFiles().stream().map(f -> Paths.get(f.getEncryptedFilePath()))
+                                                                    .collect(Collectors.toSet());
         dir.getAllSubDirs().forEach(d -> referencedFiles.addAll(getReferencedFiles(d)));
         return referencedFiles;
     }
