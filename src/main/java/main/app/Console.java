@@ -24,6 +24,9 @@ public class Console {
         while (!exit) {
             final String command = scanner.next();
             switch (command) {
+                case "reload":
+                    fileSystem.reload();
+                    System.out.println("Filesystem reloaded");
                 case "exit":
                     System.out.println("Bye!");
                     exit = true;
@@ -101,6 +104,7 @@ public class Console {
                         }
                     }
             }
+            System.out.println("\n----------------------------------------\n");
         }
     }
 }

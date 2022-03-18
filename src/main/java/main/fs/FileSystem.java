@@ -7,7 +7,6 @@ import main.fs.beans.Directory;
 
 import java.io.ByteArrayInputStream;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -23,10 +22,12 @@ import static main.Utils.EncryptionUtils.encrypt;
 public class FileSystem {
     public static final String DELETED_DIR_NAME = ".deleted";
     private static final Gson GSON = new Gson();
+    private final Path rootPath;
     private final byte[] key;
-    private final Directory root;
+    private Directory root;
 
     public FileSystem(final Path rootPath, final byte[] key) {
+        this.rootPath = rootPath;
         this.key = key;
         this.root = buildFileSystem(rootPath);
         System.out.println("Found : " + root.getTotal() + " files in filesystem");
@@ -52,25 +53,34 @@ public class FileSystem {
     }
 
     /*
-        original is file path relative to source directory
-        target is file path relative to target directory
+        original is file path relative to source directory in OS filesystem
+        target is file path relative to target directory in OS filesystem
      */
-    public boolean addOrUpdateFile(final Path original, final Path target) {
-        return createDirIfAbsent(original.getParent()).createOrUpdateFile(original.getFileName().toString(), root.getPath().relativize(target).toString());
+    public boolean addOrUpdateFile(Path original, final Path target, final Path mountPoint) {
+        original = mountPoint.resolve(original);
+        final Directory parent = createDirIfAbsent(original.getParent());
+        return parent.createOrUpdateFile(original.getFileName().toString(), root.getPath().relativize(target).toString());
     }
 
     /*
         original is file path relative to source directory
         target is file path relative to target directory
      */
-    public boolean addOrUpdateSymlinkFile(final Path original, final Path target, final Path symlinkTarget, final boolean isInternalSymlink) {
+    public boolean addOrUpdateSymlinkFile(Path original, final Path target, final Path symlinkTarget, final boolean isInternalSymlink, final Path mountPoint) {
+        original = mountPoint.resolve(original);
         return createDirIfAbsent(original.getParent()).createOrUpdateSymlinkFile(original.getFileName().toString(), root.getPath().relativize(target).toString(), symlinkTarget, isInternalSymlink);
     }
 
     public Directory createDirIfAbsent(Path path) {
         final Stack<String> stack = new Stack<>();
         while (path != null) {
-            stack.push(path.getFileName().toString());
+            try {
+                stack.push(path.getFileName().toString());
+            } catch (Exception ex) {
+                System.out.println("path : " + path);
+                System.out.println("file : " + path.getFileName());
+                throw new RuntimeException(ex);
+            }
             path = path.getParent();
         }
 
@@ -101,6 +111,10 @@ public class FileSystem {
             return false;
         }
         return parent.removeFile(path.getFileName().toString());
+    }
+
+    public void reload() {
+        root = buildFileSystem(rootPath);
     }
 
     public int clean() {

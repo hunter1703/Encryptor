@@ -4,11 +4,15 @@ import java.nio.file.Path;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 
+//this will we persisted on-disk
 public class Directory {
     private final String name;
     //dynamically, populating this property when loading from file. So that whole filesystem can be moved anywhere without invalid value for this property
+    //absolute path of this directory in the OS filesystem
     private transient Path path;
+    //children directories
     private final ConcurrentHashMap<String, Directory> dirs;
+    //children files
     private final ConcurrentHashMap<String, FileInfo> files;
 
     public Directory(String name, Path path) {
